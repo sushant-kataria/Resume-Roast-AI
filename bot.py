@@ -1,10 +1,9 @@
 import os
-import asyncio
-import base64
 import logging
 from datetime import date
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -34,8 +33,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBotUsername")
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+gemini = genai.Client(api_key=GEMINI_API_KEY)
+MODEL = "gemini-1.5-flash"
 
 # In-memory state (resets on restart; swap for Redis/DB in production)
 free_usage: dict[str, bool] = {}        # "user_id:YYYY-MM-DD" -> True
@@ -111,17 +110,23 @@ async def _send_long(update: Update, text: str, reply_markup=None, parse_mode: s
 
 
 async def _call_gemini(prompt: str) -> str:
-    response = await asyncio.to_thread(model.generate_content, prompt)
+    response = await gemini.aio.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+    )
     return response.text
 
 
 async def _extract_pdf_text(pdf_bytes: bytes) -> str:
-    b64 = base64.b64encode(pdf_bytes).decode()
-    parts = [
-        {"inline_data": {"mime_type": "application/pdf", "data": b64}},
-        "Extract all resume text. Return plain text only.",
-    ]
-    response = await asyncio.to_thread(model.generate_content, parts)
+    response = await gemini.aio.models.generate_content(
+        model=MODEL,
+        contents=[
+            types.Part(
+                inline_data=types.Blob(mime_type="application/pdf", data=pdf_bytes)
+            ),
+            "Extract all resume text. Return plain text only.",
+        ],
+    )
     return response.text
 
 
