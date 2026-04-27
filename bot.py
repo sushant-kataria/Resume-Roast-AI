@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from datetime import date
 from dotenv import load_dotenv
@@ -109,25 +110,37 @@ async def _send_long(update: Update, text: str, reply_markup=None, parse_mode: s
         await update.effective_message.reply_text(chunk, parse_mode=parse_mode, reply_markup=km)
 
 
+async def _gemini_with_retry(contents, retries: int = 4, base_delay: float = 5.0) -> str:
+    for attempt in range(retries):
+        try:
+            response = await gemini.aio.models.generate_content(
+                model=MODEL,
+                contents=contents,
+            )
+            return response.text
+        except Exception as e:
+            code = getattr(e, "status_code", None) or getattr(e, "code", None)
+            retriable = code in (429, 503) or "503" in str(e) or "429" in str(e)
+            if retriable and attempt < retries - 1:
+                wait = base_delay * (2 ** attempt)
+                logger.warning("Gemini %s, retrying in %.0fs (attempt %d/%d)", code or "error", wait, attempt + 1, retries)
+                await asyncio.sleep(wait)
+            else:
+                raise
+
+
 async def _call_gemini(prompt: str) -> str:
-    response = await gemini.aio.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-    )
-    return response.text
+    return await _gemini_with_retry(prompt)
 
 
 async def _extract_pdf_text(pdf_bytes: bytes) -> str:
-    response = await gemini.aio.models.generate_content(
-        model=MODEL,
-        contents=[
-            types.Part(
-                inline_data=types.Blob(mime_type="application/pdf", data=pdf_bytes)
-            ),
-            "Extract all resume text. Return plain text only.",
-        ],
-    )
-    return response.text
+    contents = [
+        types.Part(
+            inline_data=types.Blob(mime_type="application/pdf", data=pdf_bytes)
+        ),
+        "Extract all resume text. Return plain text only.",
+    ]
+    return await _gemini_with_retry(contents)
 
 
 # ---------------------------------------------------------------------------
