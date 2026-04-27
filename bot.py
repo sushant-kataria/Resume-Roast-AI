@@ -366,7 +366,18 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # Main
 # ---------------------------------------------------------------------------
 
+def _log_available_models() -> None:
+    try:
+        for m in gemini.models.list():
+            actions = getattr(m, "supported_actions", []) or []
+            if "generateContent" in actions:
+                logger.info("Available model: %s", m.name)
+    except Exception as e:
+        logger.warning("Could not list models: %s", e)
+
+
 def main() -> None:
+    _log_available_models()
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
