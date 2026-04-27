@@ -35,7 +35,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBotUsername")
 
 gemini = genai.Client(api_key=GEMINI_API_KEY)
-MODEL = "gemini-3.1-flash-lite-preview"
+# Fallback chain: try each model in order until one succeeds
+MODELS = [
+    "gemini-3.1-flash-lite-preview",  # 500 RPD — primary
+    "gemini-2.5-flash-lite",          # 20 RPD  — fallback 1
+    "gemini-2.5-flash",               # 20 RPD  — fallback 2
+]
 
 # In-memory state (resets on restart; swap for Redis/DB in production)
 free_usage: dict[str, bool] = {}        # "user_id:YYYY-MM-DD" -> True
@@ -110,23 +115,35 @@ async def _send_long(update: Update, text: str, reply_markup=None, parse_mode: s
         await update.effective_message.reply_text(chunk, parse_mode=parse_mode, reply_markup=km)
 
 
-async def _gemini_with_retry(contents, retries: int = 4, base_delay: float = 5.0) -> str:
-    for attempt in range(retries):
-        try:
-            response = await gemini.aio.models.generate_content(
-                model=MODEL,
-                contents=contents,
-            )
-            return response.text
-        except Exception as e:
-            code = getattr(e, "status_code", None) or getattr(e, "code", None)
-            retriable = code in (429, 503) or "503" in str(e) or "429" in str(e)
-            if retriable and attempt < retries - 1:
-                wait = base_delay * (2 ** attempt)
-                logger.warning("Gemini %s, retrying in %.0fs (attempt %d/%d)", code or "error", wait, attempt + 1, retries)
-                await asyncio.sleep(wait)
-            else:
-                raise
+async def _gemini_with_retry(contents) -> str:
+    last_error = None
+    for model in MODELS:
+        for attempt in range(3):
+            try:
+                response = await gemini.aio.models.generate_content(
+                    model=model,
+                    contents=contents,
+                )
+                logger.info("Gemini success with model: %s", model)
+                return response.text
+            except Exception as e:
+                last_error = e
+                code = getattr(e, "status_code", None) or getattr(e, "code", None)
+                err_str = str(e)
+                is_503 = "503" in err_str or code == 503
+                is_429 = "429" in err_str or code == 429
+                is_404 = "404" in err_str or code == 404
+                if is_404:
+                    logger.warning("Model %s not found, trying next", model)
+                    break  # skip remaining retries for this model
+                if (is_503 or is_429) and attempt < 2:
+                    wait = 5 * (2 ** attempt)
+                    logger.warning("Model %s returned %s, retrying in %.0fs", model, code or "error", wait)
+                    await asyncio.sleep(wait)
+                else:
+                    logger.warning("Model %s failed: %s — trying next model", model, code or err_str[:80])
+                    break  # try next model
+    raise last_error
 
 
 async def _call_gemini(prompt: str) -> str:
