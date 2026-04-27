@@ -1,4 +1,5 @@
 import os
+import asyncio
 import base64
 import logging
 from datetime import date
@@ -34,7 +35,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBotUsername")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-2.0-flash")
 
 # In-memory state (resets on restart; swap for Redis/DB in production)
 free_usage: dict[str, bool] = {}        # "user_id:YYYY-MM-DD" -> True
@@ -110,18 +111,17 @@ async def _send_long(update: Update, text: str, reply_markup=None, parse_mode: s
 
 
 async def _call_gemini(prompt: str) -> str:
-    response = model.generate_content(prompt)
+    response = await asyncio.to_thread(model.generate_content, prompt)
     return response.text
 
 
 async def _extract_pdf_text(pdf_bytes: bytes) -> str:
     b64 = base64.b64encode(pdf_bytes).decode()
-    response = model.generate_content(
-        [
-            {"inline_data": {"mime_type": "application/pdf", "data": b64}},
-            "Extract all resume text. Return plain text only.",
-        ]
-    )
+    parts = [
+        {"inline_data": {"mime_type": "application/pdf", "data": b64}},
+        "Extract all resume text. Return plain text only.",
+    ]
+    response = await asyncio.to_thread(model.generate_content, parts)
     return response.text
 
 
@@ -277,7 +277,7 @@ async def _run_free_roast(update: Update, user_id: int, resume_text: str) -> Non
         prompt = FREE_ROAST_PROMPT.format(resume_text=resume_text)
         result = await _call_gemini(prompt)
     except Exception as e:
-        logger.error("Gemini error: %s", e)
+        logger.error("Gemini error (free roast): %s", e, exc_info=True)
         await update.message.reply_text("⚠️ AI is busy, try again in 30 seconds")
         return
 
