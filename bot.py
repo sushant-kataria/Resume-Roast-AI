@@ -35,7 +35,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBotUsername")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 # In-memory state (resets on restart; swap for Redis/DB in production)
 free_usage: dict[str, bool] = {}        # "user_id:YYYY-MM-DD" -> True
