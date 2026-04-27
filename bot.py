@@ -379,6 +379,14 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # Main
 # ---------------------------------------------------------------------------
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from telegram.error import Conflict
+    if isinstance(context.error, Conflict):
+        logger.debug("Conflict on startup (old instance still shutting down) — ignored")
+        return
+    logger.error("Unhandled error: %s", context.error, exc_info=context.error)
+
+
 def _log_available_models() -> None:
     try:
         for m in gemini.models.list():
@@ -407,9 +415,10 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+    app.add_error_handler(error_handler)
 
     logger.info("ResumeRoast AI bot starting...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
